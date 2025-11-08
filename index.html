@@ -93,6 +93,7 @@
             margin-bottom: 20px;
         }
 
+
         #map {
             width: 100%;
             height: 600px;
@@ -189,13 +190,40 @@
             <div class="control-group">
                 <label for="variable-select">Variable:</label>
                 <select id="variable-select">
-                    <option value="temperature_data.json">Air Temperature (ta)</option>
-                    <option value="vegetation_data.json">Vegetation Carbon (cVeg)</option>
+                    <option value="temperature_data.json">Global Atmospheric Temperature (ta, Emon)</option>
+                    <option value="vegetation_data.json">Global Vegetation Carbon (cVeg, Emon)</option>
+                    <option value="ice_thickness_data.json">Greenland Ice Sheet Thickness (lithk, IfxGre)</option>
+                    <option value="ocean_temperature_data.json">Ocean Temperature (bigthetao, Omon)</option>
+                    <option value="snow_melt_data.json">Global Surface Snow Melt (snm, LImon)</option>
                 </select>
             </div>
             <div class="control-group" style="flex: 1; min-width: 300px;">
                 <label for="time-slider">Time Step: <span class="time-display" id="time-display">0</span></label>
                 <input type="range" id="time-slider" min="0" max="0" value="0" step="1">
+            </div>
+            <div class="control-group">
+                <label for="date-year">Year:</label>
+                <select id="date-year"></select>
+            </div>
+            <div class="control-group">
+                <label for="date-month">Month:</label>
+                <select id="date-month">
+                    <option value="01">January</option>
+                    <option value="02">February</option>
+                    <option value="03">March</option>
+                    <option value="04">April</option>
+                    <option value="05">May</option>
+                    <option value="06">June</option>
+                    <option value="07">July</option>
+                    <option value="08">August</option>
+                    <option value="09">September</option>
+                    <option value="10">October</option>
+                    <option value="11">November</option>
+                    <option value="12">December</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <button id="reset-zoom" style="padding: 8px 16px; background: #667eea; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: 600;">Reset Zoom</button>
             </div>
         </div>
 
@@ -238,6 +266,10 @@
         let precomputedScales = {}; // Cache for color scales per time step
         let animationFrameId = null; // For throttling updates
         let downsamplingFactor = 2; // Show every Nth point for smoother interaction
+        let zoom = null;
+        let g = null; // Group for map elements
+        let initialTransform = null;
+        let currentTransform = d3.zoomIdentity;
 
         // Initialize visualization
         async function init() {
@@ -257,6 +289,23 @@
 
             path = d3.geoPath().projection(projection);
 
+            // Create a group for all map elements (for zooming)
+            g = svg.append('g');
+
+            // Set up zoom behavior
+            zoom = d3.zoom()
+                .scaleExtent([1, 20])
+                .on('zoom', (event) => {
+                    g.attr('transform', event.transform);
+                    currentTransform = event.transform; // Track current zoom level
+                });
+
+            svg.call(zoom);
+
+            // Store initial transform
+            initialTransform = d3.zoomIdentity;
+            currentTransform = initialTransform;
+
             // Load world map
             try {
                 const worldTopo = await d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json');
@@ -270,16 +319,19 @@
             // Set up event listeners
             d3.select('#variable-select').on('change', loadData);
             d3.select('#time-slider').on('input', throttledUpdate);
+            d3.select('#date-year').on('change', updateFromDate);
+            d3.select('#date-month').on('change', updateFromDate);
+            d3.select('#reset-zoom').on('click', resetZoom);
 
             // Load initial data
             loadData();
         }
 
         function drawMap() {
-            if (!worldMap) return;
+            if (!worldMap || !g) return;
 
-            // Draw countries
-            svg.selectAll('.country')
+            // Draw countries in the zoomable group
+            g.selectAll('.country')
                 .data(worldMap.features)
                 .enter()
                 .append('path')
@@ -290,8 +342,25 @@
                 .attr('stroke-width', 0.5);
         }
 
+        // Reset zoom to initial view
+        function resetZoom() {
+            if (!svg || !zoom) return;
+            svg.transition()
+                .duration(750)
+                .call(zoom.transform, initialTransform);
+            currentTransform = initialTransform;
+        }
+
         async function loadData() {
             const variableFile = d3.select('#variable-select').property('value');
+            
+            // Clear all existing data points when switching datasets
+            svg.selectAll('.data-point').remove();
+            
+            // Reset precomputed data
+            precomputedPoints = null;
+            colorScale = null;
+            precomputedScales = {};
             
             // Show loading indicator without clearing the map
             const loadingIndicator = svg.append('text')
@@ -314,6 +383,9 @@
                 d3.select('#time-slider')
                     .attr('max', maxTime)
                     .attr('value', 0);
+
+                // Populate date dropdowns
+                populateDateDropdowns(data);
 
                 // Precompute points and scales for better performance
                 precomputePoints();
@@ -343,8 +415,92 @@
             }
             animationFrameId = requestAnimationFrame(() => {
                 updateVisualization();
+                updateDateFromSlider();
                 animationFrameId = null;
             });
+        }
+
+        // Populate year and month dropdowns from available data
+        function populateDateDropdowns(data) {
+            if (!data || !data.timeSteps || data.timeSteps.length === 0) return;
+
+            // Extract unique years and months from time steps
+            const years = new Set();
+            const months = new Set();
+            
+            data.timeSteps.forEach(step => {
+                const timeStr = step.time;
+                // Parse date string (format may vary: "1850-01-15T00:00:00" or "1850-01-15")
+                const dateMatch = timeStr.match(/(\d{4})-(\d{2})/);
+                if (dateMatch) {
+                    years.add(dateMatch[1]);
+                    months.add(dateMatch[2]);
+                }
+            });
+
+            // Populate year dropdown
+            const yearSelect = d3.select('#date-year');
+            yearSelect.selectAll('option').remove();
+            Array.from(years).sort().reverse().forEach(year => {
+                yearSelect.append('option').attr('value', year).text(year);
+            });
+
+            // Set to most recent year by default
+            if (years.size > 0) {
+                const mostRecentYear = Array.from(years).sort().reverse()[0];
+                yearSelect.property('value', mostRecentYear);
+            }
+
+            // Month dropdown is already populated, set to most recent month
+            if (months.size > 0) {
+                const mostRecentMonth = Array.from(months).sort().reverse()[0];
+                d3.select('#date-month').property('value', mostRecentMonth);
+            }
+        }
+
+        // Update visualization from date selection
+        function updateFromDate() {
+            if (!currentData) return;
+
+            const selectedYear = d3.select('#date-year').property('value');
+            const selectedMonth = d3.select('#date-month').property('value');
+
+            if (!selectedYear || !selectedMonth) return;
+
+            // Find matching time step
+            let foundIndex = -1;
+            for (let i = 0; i < currentData.timeSteps.length; i++) {
+                const timeStr = currentData.timeSteps[i].time;
+                const dateMatch = timeStr.match(/(\d{4})-(\d{2})/);
+                if (dateMatch && dateMatch[1] === selectedYear && dateMatch[2] === selectedMonth) {
+                    foundIndex = i;
+                    break;
+                }
+            }
+
+            if (foundIndex >= 0) {
+                // Update slider to match found index
+                d3.select('#time-slider').property('value', foundIndex);
+                // Force clear old points and update visualization
+                svg.selectAll('.data-point').remove();
+                updateVisualization();
+            }
+        }
+
+        // Update date dropdowns from slider position
+        function updateDateFromSlider() {
+            if (!currentData) return;
+
+            const timeIndex = parseInt(d3.select('#time-slider').property('value'));
+            const timeStep = currentData.timeSteps[timeIndex];
+            
+            if (timeStep && timeStep.time) {
+                const dateMatch = timeStep.time.match(/(\d{4})-(\d{2})/);
+                if (dateMatch) {
+                    d3.select('#date-year').property('value', dateMatch[1]);
+                    d3.select('#date-month').property('value', dateMatch[2]);
+                }
+            }
         }
 
         // Precompute point positions (only needs to be done once per dataset)
@@ -408,12 +564,65 @@
 
             // Create color scale based on variable
             if (variable === 'ta') {
-                colorScale = d3.scaleSequential(d3.interpolateRdYlBu)
-                    .domain([globalMax, globalMin]); // Reverse for temperature
+                // Temperature - bucketed colors (blue to red)
+                // Create 8 temperature buckets
+                const numBuckets = 8;
+                const bucketSize = (globalMax - globalMin) / numBuckets;
+                
+                // Color palette: blue -> muted colors -> red (balanced between bright and neutral)
+                const bucketColors = [
+                    '#000080', // Coldest - dark blue
+                    '#1e40af', // Very cold - blue
+                    '#3b82f6', // Cold - medium blue
+                    '#60a5fa', // Cool - light blue (muted)
+                    '#fbbf24', // Moderate - muted yellow/amber
+                    '#fb923c', // Warm - muted orange
+                    '#ef4444', // Hot - red
+                    '#991b1b'  // Hottest - dark red
+                ];
+                
+                // Create quantized scale function
+                const scaleFn = (value) => {
+                    if (value === null || value === undefined || isNaN(value)) {
+                        return '#cccccc'; // Gray for missing data
+                    }
+                    // Calculate which bucket this value falls into
+                    const bucketIndex = Math.min(
+                        Math.floor((value - globalMin) / bucketSize),
+                        numBuckets - 1
+                    );
+                    return bucketColors[bucketIndex];
+                };
+                
+                // Store bucket info for legend
+                scaleFn.buckets = Array.from({length: numBuckets}, (_, i) => ({
+                    min: globalMin + i * bucketSize,
+                    max: globalMin + (i + 1) * bucketSize,
+                    color: bucketColors[i]
+                }));
+                scaleFn.bucketSize = bucketSize;
+                scaleFn.globalMin = globalMin;
+                scaleFn.globalMax = globalMax;
+                
+                colorScale = scaleFn;
             } else if (variable === 'cVeg') {
+                // Vegetation - green scale
                 colorScale = d3.scaleSequential(d3.interpolateGreens)
                     .domain([0, globalMax]);
+            } else if (variable === 'lithk') {
+                // Ice thickness - blue-white scale
+                colorScale = d3.scaleSequential(d3.interpolateBlues)
+                    .domain([0, globalMax]);
+            } else if (variable === 'bigthetao') {
+                // Ocean temperature - similar to air temp but different range
+                colorScale = d3.scaleSequential(d3.interpolateRdYlBu)
+                    .domain([globalMax, globalMin]);
+            } else if (variable === 'snm') {
+                // Snow melt - yellow-orange-red scale
+                colorScale = d3.scaleSequential(d3.interpolateYlOrRd)
+                    .domain([0, globalMax]);
             } else {
+                // Default - viridis
                 colorScale = d3.scaleSequential(d3.interpolateViridis)
                     .domain([globalMin, globalMax]);
             }
@@ -450,17 +659,20 @@
             }).filter(d => d.value !== null && d.value !== undefined);
 
             // Use efficient data join to update existing elements
-            const circles = svg.selectAll('.data-point')
-                .data(pointsWithValues, d => `${d.latIndex}-${d.lonIndex}`);
+            // Use a unique key that includes time index to ensure proper removal when switching dates
+            // Select from the zoomable group (g) if it exists, otherwise from svg
+            const targetGroup = g && g.node() ? g : svg;
+            const circles = targetGroup.selectAll('.data-point')
+                .data(pointsWithValues, d => `data-${d.latIndex}-${d.lonIndex}-${currentData.variable}-${timeIndex}`);
 
-            // Remove old points
+            // Remove old points that don't match current time step
             circles.exit().remove();
 
             // Update existing points (just color) - this is the fast path
             circles
                 .attr('fill', d => colorScale(d.value));
 
-            // Add new points
+            // Add new points (in the zoomable group)
             const newCircles = circles.enter()
                 .append('circle')
                 .attr('class', 'data-point')
@@ -470,19 +682,41 @@
                 .attr('fill', d => colorScale(d.value))
                 .attr('opacity', 0.7)
                 .on('mouseover', function(event, d) {
+                    // Only show tooltip when zoomed in (scale > 1.1)
+                    if (currentTransform.k <= 1.1) {
+                        return;
+                    }
+                    
                     const variable = currentData.variable;
+                    // Determine N/S and E/W
+                    const latDir = d.lat >= 0 ? 'N' : 'S';
+                    const lonDir = d.lon >= 0 ? 'E' : 'W';
+                    const latAbs = Math.abs(d.lat);
+                    const lonAbs = Math.abs(d.lon);
+                    
                     d3.select('#tooltip')
                         .style('left', (event.pageX + 10) + 'px')
                         .style('top', (event.pageY - 10) + 'px')
                         .html(`
-                            <strong>Location:</strong> ${d.lat.toFixed(2)}°N, ${d.lon.toFixed(2)}°E<br>
-                            <strong>Value:</strong> ${d.value.toFixed(2)} ${getUnit(variable)}
+                            <strong>Latitude:</strong> ${latAbs.toFixed(2)}°${latDir}<br>
+                            <strong>Longitude:</strong> ${lonAbs.toFixed(2)}°${lonDir}<br>
+                            <strong>Temperature:</strong> ${d.value.toFixed(2)} ${getUnit(variable)}
                         `)
                         .classed('visible', true);
                 })
                 .on('mouseout', function() {
                     d3.select('#tooltip').classed('visible', false);
                 });
+            
+            // Ensure all circles are in the zoomable group
+            if (g && g.node()) {
+                // Move any circles that ended up in svg to g
+                svg.selectAll('.data-point').each(function() {
+                    if (this.parentNode === svg.node()) {
+                        g.node().appendChild(this);
+                    }
+                });
+            }
 
             // Merge enter and update selections
             newCircles.merge(circles);
@@ -491,37 +725,67 @@
         function updateLegend(minVal, maxVal, variable) {
             d3.select('#legend-title').text(getVariableName(variable));
             
-            // Create CSS gradient string
-            const numStops = 10;
-            const stops = [];
-            for (let i = 0; i <= numStops; i++) {
-                const val = minVal + (maxVal - minVal) * (i / numStops);
-                const color = colorScale(val);
-                stops.push(`${color} ${(i / numStops) * 100}%`);
-            }
-            
-            const gradientStr = `linear-gradient(to right, ${stops.join(', ')})`;
-            
-            // Update the legend gradient div
-            d3.select('#legend-gradient')
-                .style('background', gradientStr);
+            if (variable === 'ta' && colorScale.buckets) {
+                // Create discrete bucket legend for temperature
+                const legendGradient = d3.select('#legend-gradient');
+                legendGradient.html(''); // Clear existing content
+                
+                const numBuckets = colorScale.buckets.length;
+                const bucketWidth = 100 / numBuckets;
+                
+                colorScale.buckets.forEach((bucket, i) => {
+                    legendGradient.append('div')
+                        .style('display', 'inline-block')
+                        .style('width', `${bucketWidth}%`)
+                        .style('height', '20px')
+                        .style('background-color', bucket.color)
+                        .style('border', '1px solid #ddd')
+                        .style('box-sizing', 'border-box');
+                });
+                
+                // Update min/max labels
+                d3.select('#legend-min').text(minVal.toFixed(1));
+                d3.select('#legend-max').text(maxVal.toFixed(1));
+            } else {
+                // Create CSS gradient string for other variables
+                const numStops = 10;
+                const stops = [];
+                for (let i = 0; i <= numStops; i++) {
+                    const val = minVal + (maxVal - minVal) * (i / numStops);
+                    const color = colorScale(val);
+                    stops.push(`${color} ${(i / numStops) * 100}%`);
+                }
+                
+                const gradientStr = `linear-gradient(to right, ${stops.join(', ')})`;
+                
+                // Update the legend gradient div
+                d3.select('#legend-gradient')
+                    .html('')
+                    .style('background', gradientStr);
 
-            d3.select('#legend-min').text(minVal.toFixed(2));
-            d3.select('#legend-max').text(maxVal.toFixed(2));
+                d3.select('#legend-min').text(minVal.toFixed(2));
+                d3.select('#legend-max').text(maxVal.toFixed(2));
+            }
         }
 
         function getVariableName(variable) {
             const names = {
-                'ta': 'Air Temperature',
-                'cVeg': 'Vegetation Carbon'
+                'ta': 'Global Atmospheric Temperature (Celsius)',
+                'cVeg': 'Global Vegetation Carbon',
+                'lithk': 'Greenland Ice Sheet Thickness',
+                'bigthetao': 'Ocean Temperature',
+                'snm': 'Global Surface Snow Melt'
             };
             return names[variable] || variable;
         }
 
         function getUnit(variable) {
             const units = {
-                'ta': 'K',
-                'cVeg': 'kg/m²'
+                'ta': '°C',
+                'cVeg': 'kg/m²',
+                'lithk': 'm',
+                'bigthetao': '°C',
+                'snm': 'kg/m²/s'
             };
             return units[variable] || '';
         }
