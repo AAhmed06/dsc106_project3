@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CMIP6 Climate Data Interactive Visualization</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/topojson@3"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 30px;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 1.1em;
+        }
+
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            align-items: center;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .control-group label {
+            font-weight: 600;
+            color: #555;
+            font-size: 0.9em;
+        }
+
+        select, input[type="range"] {
+            padding: 8px 12px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            font-size: 1em;
+            background: white;
+        }
+
+        select:focus, input[type="range"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .time-display {
+            font-weight: 600;
+            color: #667eea;
+            font-size: 1.1em;
+        }
+
+        .visualization-container {
+            position: relative;
+            background: #1a1a2e;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        #map {
+            width: 100%;
+            height: 600px;
+        }
+
+        .legend {
+            position: absolute;
+            bottom: 30px;
+            right: 30px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .legend-title {
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: #333;
+        }
+
+        .legend-gradient {
+            height: 20px;
+            width: 200px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            margin-bottom: 5px;
+            background: linear-gradient(to right, #000, #fff);
+        }
+
+        .legend-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85em;
+            color: #666;
+        }
+
+        .tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 10px 15px;
+            border-radius: 5px;
+            pointer-events: none;
+            font-size: 0.9em;
+            opacity: 0;
+            transition: opacity 0.3s;
+            z-index: 1000;
+        }
+
+        .tooltip.visible {
+            opacity: 1;
+        }
+
+        .info-panel {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            margin-top: 20px;
+        }
+
+        .info-panel h3 {
+            margin-bottom: 10px;
+            color: #333;
+        }
+
+        .info-panel p {
+            color: #666;
+            line-height: 1.6;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 50px;
+            color: #666;
+            font-size: 1.2em;
+        }
+
+        .error {
+            background: #fee;
+            color: #c33;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🌍 CMIP6 Climate Data Visualization</h1>
+        <p class="subtitle">Interactive exploration of historical climate model data</p>
+
+        <div class="controls">
+            <div class="control-group">
+                <label for="variable-select">Variable:</label>
+                <select id="variable-select">
+                    <option value="temperature_data.json">Air Temperature (ta)</option>
+                    <option value="vegetation_data.json">Vegetation Carbon (cVeg)</option>
+                </select>
+            </div>
+            <div class="control-group" style="flex: 1; min-width: 300px;">
+                <label for="time-slider">Time Step: <span class="time-display" id="time-display">0</span></label>
+                <input type="range" id="time-slider" min="0" max="0" value="0" step="1">
+            </div>
+        </div>
+
+        <div class="visualization-container">
+            <div id="map"></div>
+            <div class="legend">
+                <div class="legend-title" id="legend-title">Value</div>
+                <div class="legend-gradient" id="legend-gradient"></div>
+                <div class="legend-labels">
+                    <span id="legend-min">Min</span>
+                    <span id="legend-max">Max</span>
+                </div>
+            </div>
+            <div class="tooltip" id="tooltip"></div>
+        </div>
+
+        <div class="info-panel">
+            <h3>About this Visualization</h3>
+            <p>
+                This interactive visualization displays CMIP6 (Coupled Model Intercomparison Project Phase 6) 
+                historical climate data. Use the controls above to switch between different climate variables 
+                and explore how they change over time. Hover over the map to see specific values at different 
+                locations.
+            </p>
+            <p style="margin-top: 10px;">
+                <strong>Data Source:</strong> CMIP6 Zarr stores hosted on Google Cloud Storage
+            </p>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let currentData = null;
+        let projection = null;
+        let path = null;
+        let colorScale = null;
+        let svg = null;
+        let worldMap = null;
+        let precomputedPoints = null; // Cache for point positions
+        let precomputedScales = {}; // Cache for color scales per time step
+        let animationFrameId = null; // For throttling updates
+        let downsamplingFactor = 2; // Show every Nth point for smoother interaction
+
+        // Initialize visualization
+        async function init() {
+            // Set up SVG
+            const container = d3.select('#map');
+            const width = container.node().offsetWidth;
+            const height = 600;
+
+            svg = container.append('svg')
+                .attr('width', width)
+                .attr('height', height);
+
+            // Set up projection
+            projection = d3.geoNaturalEarth1()
+                .scale(width / 6.5)
+                .translate([width / 2, height / 2]);
+
+            path = d3.geoPath().projection(projection);
+
+            // Load world map
+            try {
+                const worldTopo = await d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json');
+                worldMap = topojson.feature(worldTopo, worldTopo.objects.countries);
+                drawMap();
+            } catch (error) {
+                console.error('Error loading world map:', error);
+                d3.select('#map').html('<div class="error">Error loading world map. Please check your internet connection.</div>');
+            }
+
+            // Set up event listeners
+            d3.select('#variable-select').on('change', loadData);
+            d3.select('#time-slider').on('input', throttledUpdate);
+
+            // Load initial data
+            loadData();
+        }
+
+        function drawMap() {
+            if (!worldMap) return;
+
+            // Draw countries
+            svg.selectAll('.country')
+                .data(worldMap.features)
+                .enter()
+                .append('path')
+                .attr('class', 'country')
+                .attr('d', path)
+                .attr('fill', '#2a2a3e')
+                .attr('stroke', '#444')
+                .attr('stroke-width', 0.5);
+        }
+
+        async function loadData() {
+            const variableFile = d3.select('#variable-select').property('value');
+            
+            // Show loading indicator without clearing the map
+            const loadingIndicator = svg.append('text')
+                .attr('x', svg.attr('width') / 2)
+                .attr('y', svg.attr('height') / 2)
+                .attr('text-anchor', 'middle')
+                .attr('fill', 'white')
+                .attr('font-size', '20px')
+                .text('Loading data...');
+
+            try {
+                const data = await d3.json(variableFile);
+                currentData = data;
+
+                // Remove loading indicator
+                loadingIndicator.remove();
+
+                // Update time slider
+                const maxTime = data.timeSteps.length - 1;
+                d3.select('#time-slider')
+                    .attr('max', maxTime)
+                    .attr('value', 0);
+
+                // Precompute points and scales for better performance
+                precomputePoints();
+                precomputeScales();
+
+                // Initial visualization
+                updateVisualization();
+            } catch (error) {
+                console.error('Error loading data:', error);
+                loadingIndicator.remove();
+                
+                // Show error message
+                svg.append('text')
+                    .attr('x', svg.attr('width') / 2)
+                    .attr('y', svg.attr('height') / 2)
+                    .attr('text-anchor', 'middle')
+                    .attr('fill', '#ff4444')
+                    .attr('font-size', '16px')
+                    .text(`Error: Could not load ${variableFile}. Please run extract_data.py first.`);
+            }
+        }
+
+        // Throttled update function using requestAnimationFrame
+        function throttledUpdate() {
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+            }
+            animationFrameId = requestAnimationFrame(() => {
+                updateVisualization();
+                animationFrameId = null;
+            });
+        }
+
+        // Precompute point positions (only needs to be done once per dataset)
+        function precomputePoints() {
+            if (!currentData || !projection) return;
+
+            const lons = currentData.longitude;
+            const lats = currentData.latitude;
+            const points = [];
+
+            // Downsample for smoother interaction
+            for (let i = 0; i < lats.length; i += downsamplingFactor) {
+                for (let j = 0; j < lons.length; j += downsamplingFactor) {
+                    const [x, y] = projection([lons[j], lats[i]]);
+                    if (x !== null && y !== null && !isNaN(x) && !isNaN(y)) {
+                        points.push({
+                            x: x,
+                            y: y,
+                            lon: lons[j],
+                            lat: lats[i],
+                            latIndex: i,
+                            lonIndex: j
+                        });
+                    }
+                }
+            }
+
+            precomputedPoints = points;
+        }
+
+        // Precompute color scales for all time steps
+        function precomputeScales() {
+            if (!currentData) return;
+
+            const variable = currentData.variable;
+            precomputedScales = {};
+
+            // Compute global min/max across all time steps for consistent scaling
+            let globalMin = Infinity;
+            let globalMax = -Infinity;
+
+            currentData.timeSteps.forEach(timeStep => {
+                const allValues = [];
+                timeStep.values.forEach(row => {
+                    if (row) {
+                        row.forEach(val => {
+                            if (val !== null && val !== undefined) {
+                                allValues.push(val);
+                            }
+                        });
+                    }
+                });
+
+                if (allValues.length > 0) {
+                    const minVal = d3.min(allValues);
+                    const maxVal = d3.max(allValues);
+                    globalMin = Math.min(globalMin, minVal);
+                    globalMax = Math.max(globalMax, maxVal);
+                }
+            });
+
+            // Create color scale based on variable
+            if (variable === 'ta') {
+                colorScale = d3.scaleSequential(d3.interpolateRdYlBu)
+                    .domain([globalMax, globalMin]); // Reverse for temperature
+            } else if (variable === 'cVeg') {
+                colorScale = d3.scaleSequential(d3.interpolateGreens)
+                    .domain([0, globalMax]);
+            } else {
+                colorScale = d3.scaleSequential(d3.interpolateViridis)
+                    .domain([globalMin, globalMax]);
+            }
+
+            // Update legend with global values
+            updateLegend(globalMin, globalMax, variable);
+        }
+
+        function updateVisualization() {
+            if (!currentData || !svg) return;
+
+            // Ensure points are precomputed
+            if (!precomputedPoints) {
+                precomputePoints();
+            }
+            if (!colorScale) {
+                precomputeScales();
+            }
+
+            const timeIndex = parseInt(d3.select('#time-slider').property('value'));
+            const timeStep = currentData.timeSteps[timeIndex];
+
+            // Update time display
+            d3.select('#time-display').text(`${timeIndex} (${timeStep.time.substring(0, 10)})`);
+
+            // Get values for current time step using precomputed point indices
+            const values = timeStep.values;
+            const pointsWithValues = precomputedPoints.map(point => {
+                const val = values[point.latIndex] ? values[point.latIndex][point.lonIndex] : null;
+                return {
+                    ...point,
+                    value: val
+                };
+            }).filter(d => d.value !== null && d.value !== undefined);
+
+            // Use efficient data join to update existing elements
+            const circles = svg.selectAll('.data-point')
+                .data(pointsWithValues, d => `${d.latIndex}-${d.lonIndex}`);
+
+            // Remove old points
+            circles.exit().remove();
+
+            // Update existing points (just color) - this is the fast path
+            circles
+                .attr('fill', d => colorScale(d.value));
+
+            // Add new points
+            const newCircles = circles.enter()
+                .append('circle')
+                .attr('class', 'data-point')
+                .attr('cx', d => d.x)
+                .attr('cy', d => d.y)
+                .attr('r', 2)
+                .attr('fill', d => colorScale(d.value))
+                .attr('opacity', 0.7)
+                .on('mouseover', function(event, d) {
+                    const variable = currentData.variable;
+                    d3.select('#tooltip')
+                        .style('left', (event.pageX + 10) + 'px')
+                        .style('top', (event.pageY - 10) + 'px')
+                        .html(`
+                            <strong>Location:</strong> ${d.lat.toFixed(2)}°N, ${d.lon.toFixed(2)}°E<br>
+                            <strong>Value:</strong> ${d.value.toFixed(2)} ${getUnit(variable)}
+                        `)
+                        .classed('visible', true);
+                })
+                .on('mouseout', function() {
+                    d3.select('#tooltip').classed('visible', false);
+                });
+
+            // Merge enter and update selections
+            newCircles.merge(circles);
+        }
+
+        function updateLegend(minVal, maxVal, variable) {
+            d3.select('#legend-title').text(getVariableName(variable));
+            
+            // Create CSS gradient string
+            const numStops = 10;
+            const stops = [];
+            for (let i = 0; i <= numStops; i++) {
+                const val = minVal + (maxVal - minVal) * (i / numStops);
+                const color = colorScale(val);
+                stops.push(`${color} ${(i / numStops) * 100}%`);
+            }
+            
+            const gradientStr = `linear-gradient(to right, ${stops.join(', ')})`;
+            
+            // Update the legend gradient div
+            d3.select('#legend-gradient')
+                .style('background', gradientStr);
+
+            d3.select('#legend-min').text(minVal.toFixed(2));
+            d3.select('#legend-max').text(maxVal.toFixed(2));
+        }
+
+        function getVariableName(variable) {
+            const names = {
+                'ta': 'Air Temperature',
+                'cVeg': 'Vegetation Carbon'
+            };
+            return names[variable] || variable;
+        }
+
+        function getUnit(variable) {
+            const units = {
+                'ta': 'K',
+                'cVeg': 'kg/m²'
+            };
+            return units[variable] || '';
+        }
+
+        // Initialize on page load
+        init();
+    </script>
+</body>
+</html>
+
