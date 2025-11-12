@@ -520,39 +520,32 @@
         // Populate year and month dropdowns from available data
         function populateDateDropdowns(data) {
             if (!data || !data.timeSteps || data.timeSteps.length === 0) return;
-
-            // Extract unique years and months from time steps
-            const years = new Set();
-            const months = new Set();
             
-            data.timeSteps.forEach(step => {
-                const timeStr = step.time;
-                // Parse date string (format may vary: "1850-01-15T00:00:00" or "1850-01-15")
-                const dateMatch = timeStr.match(/(\d{4})-(\d{2})/);
-                if (dateMatch) {
-                    years.add(dateMatch[1]);
-                    months.add(dateMatch[2]);
-                }
-            });
+            // --- Extract all year values from dataset ---
+            const allYears = data.timeSteps
+                .map(step => {
+                    const match = step.time.match(/(\d{4})/);
+                    return match ? parseInt(match[1]) : null;
+                })
+                .filter(y => y !== null);
 
-            // Populate year dropdown
+            const minYear = d3.min(allYears);
+            const maxYear = d3.max(allYears);
+
+            // --- Populate the year dropdown with *every* year in range ---
             const yearSelect = d3.select('#date-year');
             yearSelect.selectAll('option').remove();
-            Array.from(years).sort().reverse().forEach(year => {
-                yearSelect.append('option').attr('value', year).text(year);
-            });
 
-            // Set to most recent year by default
-            if (years.size > 0) {
-                const mostRecentYear = Array.from(years).sort().reverse()[0];
-                yearSelect.property('value', mostRecentYear);
+            for (let y = minYear; y <= maxYear; y++) {
+                yearSelect.append('option')
+                    .attr('value', y)
+                    .text(y);
             }
 
-            // Month dropdown is already populated, set to most recent month
-            if (months.size > 0) {
-                const mostRecentMonth = Array.from(months).sort().reverse()[0];
-                d3.select('#date-month').property('value', mostRecentMonth);
-            }
+            // --- Set defaults (first year + January) ---
+            yearSelect.property('value', minYear);
+            d3.select('#date-month').property('value', '01');
+
         }
 
         // Update visualization from date selection
