@@ -177,6 +177,8 @@ def extract_vegetation_data():
         ds = xr.open_zarr(mapper, consolidated=True)
         
         var = 'cVeg'
+        ds['time'] = pd.to_datetime(ds['time'].values)
+        ds = ds.sel(time=slice('1985-01-01', '2014-12-31'))
         lons_full = ds['lon'].values
         lats_full = ds['lat'].values
         times = ds['time'].values
@@ -240,6 +242,11 @@ def extract_vegetation_data():
                 print(f"  Processed {num_times - i}/{num_times} time steps...")
         
         print(f"Saving data to vegetation_data.json...")
+        data['time_range'] = {
+            "start": str(ds['time'].values[0])[:10],
+            "end": str(ds['time'].values[-1])[:10],
+            "num_steps": len(ds['time'].values)
+        }   
         with open('vegetation_data.json', 'w') as f:
             json.dump(data, f)
         
@@ -339,7 +346,8 @@ def extract_ocean_temperature_data():
                 lats = np.linspace(-90, 90, j_size)
         else:
             raise ValueError("Cannot determine latitude coordinates for ocean data")
-        
+        ds['time'] = pd.to_datetime(ds['time'].values)
+        ds = ds.sel(time=slice('1985-01-01', '2014-12-31'))
         times = ds['time'].values
         # Downsample spatial resolution to reduce file size
         # Using spatial_step = 2 for better resolution
@@ -423,6 +431,11 @@ def extract_ocean_temperature_data():
                 print(f"  Processed {num_times - i}/{num_times} time steps...")
         
         print(f"Saving data to ocean_temperature_data.json...")
+        data['time_range'] = {
+            "start": str(ds['time'].values[0])[:10],
+            "end": str(ds['time'].values[-1])[:10],
+            "num_steps": len(ds['time'].values)
+        }
         with open('ocean_temperature_data.json', 'w') as f:
             json.dump(data, f)
         

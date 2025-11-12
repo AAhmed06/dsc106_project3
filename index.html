@@ -322,7 +322,7 @@
                 Ali Ahmed: Pulled data and created the website/final visualization <br>
                 Wanchen Yang: Wrote the project write-up and implemented the Play/Pause animation feature for the time slider.<br>
                 Brandon Van Horn: Completed the project checkpoint, wrote part of the writeup, and cleaned up the final visualization<br>
-                Emily Cai: N/A<br><br>
+                Emily Cai: Contributed to writeup, filtered datasets, added time range metadata in legend<br><br>
 
                 
                 We spent around 20-25 hours total working on this.
@@ -475,6 +475,14 @@
 
                 // Populate date dropdowns
                 populateDateDropdowns(data);
+
+                if (data.time_range) {
+                    d3.select('#legend-description')
+                    .text(`Data range: ${data.time_range.start} → ${data.time_range.end} (${data.time_range.num_steps} months)`);
+                } else {
+                    d3.select('#legend-description')
+                    .text('');
+                }
 
                 // Precompute points and scales for better performance
                 precomputePoints();
