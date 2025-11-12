@@ -249,17 +249,6 @@ def extract_vegetation_data():
         }   
         with open('vegetation_data.json', 'w') as f:
             json.dump(data, f)
-
-        small_data = data.copy()
-        small_data["timeSteps"] = data["timeSteps"][::6]  # keep 1 every 6 months
-        small_data["longitude"] = data["longitude"][::4]
-        small_data["latitude"] = data["latitude"][::4]
-        for ts in small_data["timeSteps"]:
-            ts["values"] = [row[::4] for row in ts["values"][::4]]
-
-        with open('vegetation_data_small.json', 'w') as f:
-            json.dump(small_data, f)
-        print("Saved lightweight vegetation_data_small.json for GitHub.")
         
         print("Done!")
         return data
