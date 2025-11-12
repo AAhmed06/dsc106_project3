@@ -834,6 +834,10 @@
             if (variable === 'ta' && colorScale.buckets) {
                 // Create discrete bucket legend for temperature
                 const legendGradient = d3.select('#legend-gradient');
+                legendGradient
+                    .attr('style', null)   // clears all inline CSS styles
+                    .selectAll('*').remove(); // remove all child elements (e.g., <div> color bins)
+                        
                 legendGradient.html(''); // Clear existing content
                 
                 colorScale.buckets.forEach((bucket, i) => {
