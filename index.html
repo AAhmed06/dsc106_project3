@@ -101,51 +101,81 @@
 
         .legend {
             position: absolute;
-            bottom: 30px;
-            right: 30px;
+            bottom: 20px;
+            right: 20px;
             background: rgba(255, 255, 255, 0.95);
-            padding: 15px;
-            border-radius: 8px;
+            padding: 10px;
+            border-radius: 6px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
 
         .legend-title {
             font-weight: 600;
-            margin-bottom: 10px;
+            margin-bottom: 6px;
             color: #333;
+            font-size: 0.85em;
         }
 
         .legend-gradient {
-            height: 20px;
-            width: 200px;
+            height: 15px;
+            width: 150px;
             border: 1px solid #ddd;
-            border-radius: 3px;
-            margin-bottom: 5px;
+            border-radius: 2px;
+            margin-bottom: 4px;
             background: linear-gradient(to right, #000, #fff);
+            display: flex;
+            overflow: hidden;
+            align-items: center;
+            justify-content: center;
         }
 
         .legend-labels {
             display: flex;
             justify-content: space-between;
-            font-size: 0.85em;
+            font-size: 0.75em;
             color: #666;
         }
 
-        .tooltip {
-            position: absolute;
-            background: rgba(0, 0, 0, 0.9);
-            color: white;
-            padding: 10px 15px;
-            border-radius: 5px;
-            pointer-events: none;
-            font-size: 0.9em;
-            opacity: 0;
-            transition: opacity 0.3s;
-            z-index: 1000;
+        .legend-description {
+            font-size: 0.7em;
+            color: #888;
+            margin-top: 4px;
+            font-style: italic;
+            text-align: center;
         }
 
-        .tooltip.visible {
-            opacity: 1;
+        .tooltip-panel {
+            background: #f8f9fa;
+            border: 2px solid #667eea;
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 20px;
+            min-height: 120px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .tooltip-panel h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 8px;
+        }
+
+        .tooltip-panel-content {
+            color: #333;
+            font-size: 16px;
+            line-height: 1.8;
+        }
+
+        .tooltip-panel-content.empty {
+            color: #999;
+            font-style: italic;
+        }
+
+        .tooltip-panel-content strong {
+            color: #667eea;
+            font-weight: 600;
         }
 
         .info-panel {
@@ -192,7 +222,6 @@
                 <select id="variable-select">
                     <option value="temperature_data.json">Global Atmospheric Temperature (ta, Emon)</option>
                     <option value="vegetation_data.json">Global Vegetation Carbon (cVeg, Emon)</option>
-                    <option value="ice_thickness_data.json">Greenland Ice Sheet Thickness (lithk, IfxGre)</option>
                     <option value="ocean_temperature_data.json">Ocean Temperature (bigthetao, Omon)</option>
                     <option value="snow_melt_data.json">Global Surface Snow Melt (snm, LImon)</option>
                 </select>
@@ -236,8 +265,15 @@
                     <span id="legend-min">Min</span>
                     <span id="legend-max">Max</span>
                 </div>
+                <div class="legend-description" id="legend-description"></div>
             </div>
-            <div class="tooltip" id="tooltip"></div>
+        </div>
+
+        <div class="tooltip-panel">
+            <h3>Data Point Information</h3>
+            <div class="tooltip-panel-content empty" id="tooltip-panel-content">
+                Hover over a data point on the map (when zoomed in) to see details here.
+            </div>
         </div>
 
         <div class="info-panel">
@@ -361,6 +397,11 @@
             precomputedPoints = null;
             colorScale = null;
             precomputedScales = {};
+            
+            // Clear tooltip panel
+            d3.select('#tooltip-panel-content')
+                .classed('empty', true)
+                .html('Hover over a data point on the map (when zoomed in) to see details here.');
             
             // Show loading indicator without clearing the map
             const loadingIndicator = svg.append('text')
@@ -609,10 +650,6 @@
                 // Vegetation - green scale
                 colorScale = d3.scaleSequential(d3.interpolateGreens)
                     .domain([0, globalMax]);
-            } else if (variable === 'lithk') {
-                // Ice thickness - blue-white scale
-                colorScale = d3.scaleSequential(d3.interpolateBlues)
-                    .domain([0, globalMax]);
             } else if (variable === 'bigthetao') {
                 // Ocean temperature - similar to air temp but different range
                 colorScale = d3.scaleSequential(d3.interpolateRdYlBu)
@@ -684,28 +721,33 @@
                 .on('mouseover', function(event, d) {
                     // Only show tooltip when zoomed in (scale > 1.1)
                     if (currentTransform.k <= 1.1) {
+                        // Update panel to show message about zooming in
+                        d3.select('#tooltip-panel-content')
+                            .classed('empty', true)
+                            .html('Zoom in to see data point details. Use mouse wheel or pinch to zoom.');
                         return;
                     }
                     
                     const variable = currentData.variable;
+                    const variableName = getVariableName(variable);
                     // Determine N/S and E/W
                     const latDir = d.lat >= 0 ? 'N' : 'S';
                     const lonDir = d.lon >= 0 ? 'E' : 'W';
                     const latAbs = Math.abs(d.lat);
                     const lonAbs = Math.abs(d.lon);
                     
-                    d3.select('#tooltip')
-                        .style('left', (event.pageX + 10) + 'px')
-                        .style('top', (event.pageY - 10) + 'px')
+                    // Update fixed tooltip panel
+                    d3.select('#tooltip-panel-content')
+                        .classed('empty', false)
                         .html(`
-                            <strong>Latitude:</strong> ${latAbs.toFixed(2)}°${latDir}<br>
-                            <strong>Longitude:</strong> ${lonAbs.toFixed(2)}°${lonDir}<br>
-                            <strong>Temperature:</strong> ${d.value.toFixed(2)} ${getUnit(variable)}
-                        `)
-                        .classed('visible', true);
+                            <div><strong>Variable:</strong> ${variableName}</div>
+                            <div><strong>Latitude:</strong> ${latAbs.toFixed(2)}°${latDir}</div>
+                            <div><strong>Longitude:</strong> ${lonAbs.toFixed(2)}°${lonDir}</div>
+                            <div><strong>Value:</strong> ${d.value.toFixed(2)} ${getUnit(variable)}</div>
+                        `);
                 })
                 .on('mouseout', function() {
-                    d3.select('#tooltip').classed('visible', false);
+                    // Keep the panel content visible (don't clear it on mouseout)
                 });
             
             // Ensure all circles are in the zoomable group
@@ -723,24 +765,35 @@
         }
 
         function updateLegend(minVal, maxVal, variable) {
-            d3.select('#legend-title').text(getVariableName(variable));
+            const variableName = getVariableName(variable);
+            const unit = getUnit(variable);
+            // Show variable name with code and unit in legend
+            d3.select('#legend-title').html(`${variableName}<br><span style="font-size: 0.7em; font-weight: normal; color: #666;">(${variable}, ${unit})</span>`);
+            
+            // Add descriptive text for specific variables to clarify what the gradient means
+            let description = '';
+            if (variable === 'snm') {
+                description = 'Lighter (yellow) = slower melting, Darker (red) = faster melting';
+            } else if (variable === 'ta') {
+                description = 'Blue = colder, Red = hotter';
+            } else if (variable === 'cVeg') {
+                description = 'Lighter = less carbon, Darker = more carbon';
+            } else if (variable === 'bigthetao') {
+                description = 'Blue = colder, Red = warmer';
+            }
+            d3.select('#legend-description').text(description);
             
             if (variable === 'ta' && colorScale.buckets) {
                 // Create discrete bucket legend for temperature
                 const legendGradient = d3.select('#legend-gradient');
                 legendGradient.html(''); // Clear existing content
                 
-                const numBuckets = colorScale.buckets.length;
-                const bucketWidth = 100 / numBuckets;
-                
                 colorScale.buckets.forEach((bucket, i) => {
                     legendGradient.append('div')
-                        .style('display', 'inline-block')
-                        .style('width', `${bucketWidth}%`)
-                        .style('height', '20px')
+                        .style('flex', '1')
+                        .style('height', '100%')
                         .style('background-color', bucket.color)
-                        .style('border', '1px solid #ddd')
-                        .style('box-sizing', 'border-box');
+                        .style('min-width', '0');
                 });
                 
                 // Update min/max labels
@@ -748,11 +801,13 @@
                 d3.select('#legend-max').text(maxVal.toFixed(1));
             } else {
                 // Create CSS gradient string for other variables
-                const numStops = 10;
+                // Use more stops for smoother gradient and ensure even spacing
+                const numStops = 100;
                 const stops = [];
                 for (let i = 0; i <= numStops; i++) {
                     const val = minVal + (maxVal - minVal) * (i / numStops);
                     const color = colorScale(val);
+                    // Evenly space stops from 0% to 100%
                     stops.push(`${color} ${(i / numStops) * 100}%`);
                 }
                 
@@ -761,7 +816,8 @@
                 // Update the legend gradient div
                 d3.select('#legend-gradient')
                     .html('')
-                    .style('background', gradientStr);
+                    .style('background', gradientStr)
+                    .style('display', 'block');
 
                 d3.select('#legend-min').text(minVal.toFixed(2));
                 d3.select('#legend-max').text(maxVal.toFixed(2));
@@ -770,11 +826,10 @@
 
         function getVariableName(variable) {
             const names = {
-                'ta': 'Global Atmospheric Temperature (Celsius)',
+                'ta': 'Global Atmospheric Temperature',
                 'cVeg': 'Global Vegetation Carbon',
-                'lithk': 'Greenland Ice Sheet Thickness',
                 'bigthetao': 'Ocean Temperature',
-                'snm': 'Global Surface Snow Melt'
+                'snm': 'Global Surface Snow Melt Rate'
             };
             return names[variable] || variable;
         }
@@ -783,7 +838,6 @@
             const units = {
                 'ta': '°C',
                 'cVeg': 'kg/m²',
-                'lithk': 'm',
                 'bigthetao': '°C',
                 'snm': 'kg/m²/s'
             };
