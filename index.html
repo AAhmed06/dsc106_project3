@@ -311,7 +311,7 @@
                 
                 For color, we wanted the scales to feel intuitive: <br><br> 
                 Temperature variables use a red-yellow-blue gradient, so warm areas show up red and cooler areas show up blue.
-                Vegetation uses green shades because it’s the most natural and instantly readable. <br><br>
+                Vegetation uses a brown to green gradient that intuitively displays carbon levels (green = greater carbon). <br><br>
 
                 For interactivity: <br><br>
                 
@@ -322,7 +322,7 @@
                 Ali Ahmed: Pulled data and created the website/final visualization <br>
                 Wanchen Yang: Wrote the project write-up and implemented the Play/Pause animation feature for the time slider.<br>
                 Brandon Van Horn: Completed the project checkpoint, wrote part of the writeup, and cleaned up the final visualization<br>
-                Emily Cai: Contributed to writeup, filtered datasets, added time range metadata in legend<br><br>
+                Emily Cai: Contributed to writeup, filtered datasets and smoothed color/mapping encoding bugs, added time range metadata in legend<br><br>
 
                 
                 We spent around 20-25 hours total working on this.
@@ -463,6 +463,14 @@
             try {
                 const data = await d3.json(variableFile);
                 currentData = data;
+                // Toggle month dropdown visibility
+            if (data.variable === 'cVeg') {
+                d3.select('#date-month').style('display', 'none');
+                d3.select('label[for="date-month"]').style('display', 'none');
+            } else {
+                d3.select('#date-month').style('display', 'block');
+                d3.select('label[for="date-month"]').style('display', 'block');
+            }
 
                 // Remove loading indicator
                 loadingIndicator.remove();
@@ -553,28 +561,39 @@
             if (!currentData) return;
 
             const selectedYear = d3.select('#date-year').property('value');
-            const selectedMonth = d3.select('#date-month').property('value');
+            const variable = currentData.variable;
+            let selectedMonth = '01'; // default for annual data
 
-            if (!selectedYear || !selectedMonth) return;
+            // Only check month if not vegetation
+            if (variable !== 'cVeg') {
+                selectedMonth = d3.select('#date-month').property('value');
+            }
 
             // Find matching time step
             let foundIndex = -1;
             for (let i = 0; i < currentData.timeSteps.length; i++) {
                 const timeStr = currentData.timeSteps[i].time;
                 const dateMatch = timeStr.match(/(\d{4})-(\d{2})/);
-                if (dateMatch && dateMatch[1] === selectedYear && dateMatch[2] === selectedMonth) {
-                    foundIndex = i;
-                    break;
-                }
-            }
+                const yearMatch = timeStr.match(/(\d{4})/);
 
-            if (foundIndex >= 0) {
-                // Update slider to match found index
-                d3.select('#time-slider').property('value', foundIndex);
-                // Force clear old points and update visualization
-                svg.selectAll('.data-point').remove();
-                updateVisualization();
-            }
+                if (variable === 'cVeg') {
+                    if (yearMatch && yearMatch[1] === selectedYear) {
+                        foundIndex = i;
+                        break;
+                    }
+                } else {
+                    if (dateMatch && dateMatch[1] === selectedYear && dateMatch[2] === selectedMonth) {
+                        foundIndex = i;
+                        break;
+                    }
+                }
+    }
+
+    if (foundIndex >= 0) {
+        d3.select('#time-slider').property('value', foundIndex);
+        svg.selectAll('.data-point').remove();
+        updateVisualization();
+    }
         }
 
         // Update date dropdowns from slider position
@@ -583,10 +602,14 @@
 
             const timeIndex = parseInt(d3.select('#time-slider').property('value'));
             const timeStep = currentData.timeSteps[timeIndex];
+            const variable = currentData.variable;
             
             if (timeStep && timeStep.time) {
+                const yearMatch = timeStep.time.match(/(\d{4})/);
                 const dateMatch = timeStep.time.match(/(\d{4})-(\d{2})/);
-                if (dateMatch) {
+                if (variable === 'cVeg' && yearMatch) {
+                    d3.select('#date-year').property('value', yearMatch[1]);
+                } else if (dateMatch) {
                     d3.select('#date-year').property('value', dateMatch[1]);
                     d3.select('#date-month').property('value', dateMatch[2]);
                 }
@@ -696,9 +719,40 @@
                 
                 colorScale = scaleFn;
             } else if (variable === 'cVeg') {
-                // Vegetation - green scale
-                colorScale = d3.scaleSequential(d3.interpolateGreens)
-                    .domain([0, globalMax]);
+                // Vegetation – earthy high-contrast palette, same logic as temperature buckets
+                const numBuckets = 8;
+                const bucketSize = (globalMax - 0) / numBuckets;
+
+                const bucketColors = [
+                    '#8c510a', // low vegetation - dry soil
+                    '#bf812d', // sparse grass
+                    '#dfc27d', // grassland
+                    '#80cdc1', // humid lowland
+                    '#35978f', // temperate forest
+                    '#01665e', // tropical forest
+                    '#00441b', // dense forest
+                    '#001a00'  // lushest canopy
+                ];
+
+                const scaleFn = (value) => {
+                    if (value === null || isNaN(value)) return '#cccccc';
+                    const bucketIndex = Math.min(
+                        Math.floor((value - 0) / bucketSize),
+                        numBuckets - 1
+                    );
+                    return bucketColors[bucketIndex];
+                };
+
+                scaleFn.buckets = Array.from({ length: numBuckets }, (_, i) => ({
+                    min: 0 + i * bucketSize,
+                    max: 0 + (i + 1) * bucketSize,
+                    color: bucketColors[i]
+                }));
+                scaleFn.bucketSize = bucketSize;
+                scaleFn.globalMin = 0;
+                scaleFn.globalMax = globalMax;
+
+                colorScale = scaleFn;
             } else if (variable === 'bigthetao') {
                 // Ocean temperature - similar to air temp but different range
                 colorScale = d3.scaleSequential(d3.interpolateRdYlBu)

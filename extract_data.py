@@ -208,39 +208,37 @@ def extract_vegetation_data():
         # Extract in reverse order: most recent first (index 0 = most recent)
         # Load all time steps at once for better performance
         print("  Loading data into memory...")
-        da_subset = ds[var].isel(time=slice(start_index, start_index + num_times))
+        # --- Aggregate by year (reduce 360 months -> 30 years) ---
+        print("  Aggregating to yearly means (1985–2014)...")
+        da_subset = ds[var].groupby('time.year').mean(dim='time')
+        times = da_subset['year'].values  # now only 1985–2014
+        num_times = len(times)
+
+        # Downsample spatially (keep good detail)
+        spatial_step = 2
+        lons = lons_full[::spatial_step]
+        lats = lats_full[::spatial_step]
+
+        print(f"Extracting {num_times} yearly steps ({times[0]}–{times[-1]})...")
+        print(f"  Spatial resolution: {len(lons)}x{len(lats)} (downsampled from {len(lons_full)}x{len(lats_full)})")
+
+        # Preload dataset
         da_subset = da_subset.load()
-        
-        # Iterate backwards through the time steps
-        for i in range(num_times - 1, -1, -1):  # From num_times-1 down to 0
-            t = start_index + i  # Actual time index in dataset
-            time_idx = i  # Index in the subset array
-            
-            # Get values for this time step (already loaded)
-            values = da_subset.isel(time=time_idx).values
-            
-            # Downsample spatial resolution (take every Nth point in both dimensions)
+
+        # Iterate through each year
+        for i in range(num_times):
+            values = da_subset.isel(year=i).values
             values_downsampled = values[::spatial_step, ::spatial_step]
-            
-            # Vectorized processing: convert to list and handle NaN
-            values_list = []
-            for row in values_downsampled:
-                # Use list comprehension which is faster than nested loops with conditionals
-                values_list.append([None if np.isnan(v) or v <= 1e-6 else float(v) for v in row])
-            
-            # Get time as string
-            time_str = str(times[t])
-            
-            # Store with most recent at index 0 (append as we go backwards)
+            values_list = [[None if np.isnan(v) or v <= 1e-6 else float(v) for v in row] for row in values_downsampled]
+            time_str = str(times[i])
             data['timeSteps'].append({
-                'timeIndex': num_times - 1 - i,  # 0 for most recent, num_times-1 for oldest
+                'timeIndex': i,
                 'time': time_str,
                 'values': values_list
             })
-            
-            if (num_times - i) % 10 == 0:
-                print(f"  Processed {num_times - i}/{num_times} time steps...")
-        
+            if (i + 1) % 5 == 0:
+                print(f"  Processed {i+1}/{num_times} years...")
+
         print(f"Saving data to vegetation_data.json...")
         data['time_range'] = {
             "start": str(ds['time'].values[0])[:10],
@@ -314,15 +312,12 @@ def extract_ocean_temperature_data():
             
             # Check if longitude is in 0-360 range
             if np.max(lons_array) > 180:
+               if np.max(lons_array) > 180:
                 print("  Converting longitude from 0-360 to -180-180 range...")
-                # Find where to split (at 180°)
-                wrap_idx = np.argmin(np.abs(lons_array - 180))
-                # Roll so that -180 is near the start
-                lons_array = np.roll(lons_array, -wrap_idx)
                 lons_array = np.where(lons_array > 180, lons_array - 360, lons_array)
                 needs_data_roll = True
-                roll_amount = wrap_idx
-                print(f"  Rolling data by {wrap_idx} points to align with -180-180 coordinates")
+                roll_amount = len(lons_array) // 2  # shift 180 degrees
+                print(f"  Rolling data by {roll_amount} points to align with prime meridian (Africa)")
             else:
                 # Longitude is already in -180-180 range, but might not start at -180
                 # Find the index closest to -180 and roll to start there
@@ -360,6 +355,10 @@ def extract_ocean_temperature_data():
         lats_full = lats
         lons = lons_full[::spatial_step] if hasattr(lons_full, '__getitem__') else lons_full
         lats = lats_full[::spatial_step] if hasattr(lats_full, '__getitem__') else lats_full
+        # ✅ Normalize longitude values for D3 (convert 0–360 → -180–180)
+        lons = [(lon - 360 if lon > 180 else lon) for lon in lons]
+        lons_full = [(lon - 360 if lon > 180 else lon) for lon in lons_full]
+
         
         years = num_times / 12
         print(f"Extracting {num_times} time steps (most recent {years:.1f} years)...")
