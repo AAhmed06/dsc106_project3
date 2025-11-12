@@ -254,6 +254,12 @@
             <div class="control-group">
                 <button id="reset-zoom" style="padding: 8px 16px; background: #667eea; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: 600;">Reset Zoom</button>
             </div>
+
+            <div class="control-group">
+              <button id="play-pause" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: 600;">
+                ▶ Play
+              </button>
+            </div>
         </div>
 
         <div class="visualization-container">
@@ -309,13 +315,12 @@
 
                 For interactivity: <br><br>
                 
-                We added a variable selector, and a time slider.
-                We also included tooltips to show the exact value and coordinates, and a dynamic legend that updates for each variable.
-                Keeping one variable visible at a time made the interface cleaner and easier to understand. <br><br>
+                We added a variable selector, a time slider, and a Play/Pause button that automatically animates through time steps so users can watch changes happen over the years.
+                We also included tooltips to show the exact value and coordinates, and a dynamic legend that updates for each variable.<br><br>
 
                 Overview of Development Process (Our group split the work based on what each person was most comfortable with): <br><br>
                 Ali Ahmed: Pulled data and created the website/final visualization <br>
-                Wanchen Yang: Wrote part of the writeup<br>
+                Wanchen Yang: Wrote the project write-up and implemented the Play/Pause animation feature for the time slider.<br>
                 Brandon Van Horn: Completed the project checkpoint, wrote part of the writeup, and cleaned up the final visualization<br>
                 Emily Cai: N/A<br><br>
 
@@ -886,6 +891,30 @@
             };
             return units[variable] || '';
         }
+        
+        // --- Play and Pause Animation Control ---
+        let isPlaying = false;
+        let playInterval = null;
+
+        d3.select("#play-pause").on("click", function() {
+            if (!currentData) return;
+
+            if (!isPlaying) {
+                isPlaying = true;
+                d3.select(this).text("⏸ Pause");
+                playInterval = setInterval(() => {
+                    let slider = d3.select("#time-slider");
+                    let current = +slider.property("value");
+                    let max = +slider.attr("max");
+                    slider.property("value", (current + 1) % (max + 1));
+                    throttledUpdate();
+                }, 400);
+            } else {
+                isPlaying = false;
+                clearInterval(playInterval);
+                d3.select(this).text("▶ Play");
+            }
+        });
 
         // Initialize on page load
         init();
