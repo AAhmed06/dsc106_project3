@@ -461,7 +461,7 @@
                 .text('Loading data...');
 
             try {
-                const data = await d3.json(variableFile);
+                const data = await d3.json(`${variableFile}?v=${Date.now()}`);
                 currentData = data;
                 // Toggle month dropdown visibility
             if (data.variable === 'cVeg') {
