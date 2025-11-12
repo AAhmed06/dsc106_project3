@@ -463,6 +463,8 @@
             try {
                 const data = await d3.json(`${variableFile}?v=${Date.now()}`);
                 currentData = data;
+                if (data.variable === "ta") data.timeSteps.reverse();
+
                 // Toggle month dropdown visibility
             if (data.variable === 'cVeg') {
                 d3.select('#date-month').style('display', 'none');
