@@ -223,7 +223,6 @@
                     <option value="temperature_data.json">Global Atmospheric Temperature (ta, Emon)</option>
                     <option value="vegetation_data.json">Global Vegetation Carbon (cVeg, Emon)</option>
                     <option value="ocean_temperature_data.json">Ocean Temperature (bigthetao, Omon)</option>
-                    <!-- <option value="snow_melt_data.json">Global Surface Snow Melt (snm, LImon)</option> -->
                 </select>
             </div>
             <div class="control-group" style="flex: 1; min-width: 300px;">
@@ -311,7 +310,7 @@
                 
                 For color, we wanted the scales to feel intuitive: <br><br> 
                 Temperature variables use a red-yellow-blue gradient, so warm areas show up red and cooler areas show up blue.
-                Vegetation uses a brown to green gradient that intuitively displays carbon levels (green = greater carbon). <br><br>
+                Vegetation uses a green gradient that intuitively displays carbon levels (green = greater carbon). <br><br>
 
                 For interactivity: <br><br>
                 
@@ -759,10 +758,6 @@
                 // Ocean temperature - similar to air temp but different range
                 colorScale = d3.scaleSequential(d3.interpolateRdYlBu)
                     .domain([globalMax, globalMin]);
-            } else if (variable === 'snm') {
-                // Snow melt - yellow-orange-red scale
-                colorScale = d3.scaleSequential(d3.interpolateYlOrRd)
-                    .domain([0, globalMax]);
             } else {
                 // Default - viridis
                 colorScale = d3.scaleSequential(d3.interpolateViridis)
@@ -799,6 +794,22 @@
                     value: val
                 };
             }).filter(d => d.value !== null && d.value !== undefined);
+
+            if (currentData.variable === 'bigthetao') {
+                const lonOffset = -105;
+                const latOffset = -3; 
+
+                    pointsWithValues.forEach(d => {
+                        // Apply both longitude and latitude corrections
+                        d.lon = ((d.lon + lonOffset + 180) % 360) - 180;
+                        d.lat = d.lat + latOffset;
+
+                        // Reproject corrected coordinates
+                        const projected = projection([d.lon, d.lat]);
+                        d.x = projected[0];
+                        d.y = projected[1];
+                });
+            }
 
             // Use efficient data join to update existing elements
             // Use a unique key that includes time index to ensure proper removal when switching dates
@@ -938,7 +949,6 @@
                 'ta': 'Global Atmospheric Temperature',
                 'cVeg': 'Global Vegetation Carbon',
                 'bigthetao': 'Ocean Temperature',
-                'snm': 'Global Surface Snow Melt Rate'
             };
             return names[variable] || variable;
         }

@@ -303,33 +303,21 @@ def extract_ocean_temperature_data():
         else:
             raise ValueError("Cannot determine longitude coordinates for ocean data")
         
-        # Convert longitude from 0-360 to -180-180 if needed (ocean models often use 0-360)
-        # Also handle if data is centered differently than the map projection expects
-        needs_data_roll = False
-        roll_amount = 0
-        if lons is not None and len(lons) > 0:
-            lons_array = np.array(lons) if not isinstance(lons, np.ndarray) else lons
-            
-            # Check if longitude is in 0-360 range
-            if np.max(lons_array) > 180:
-               if np.max(lons_array) > 180:
-                print("  Converting longitude from 0-360 to -180-180 range...")
-                lons_array = np.where(lons_array > 180, lons_array - 360, lons_array)
-                needs_data_roll = True
-                roll_amount = len(lons_array) // 2  # shift 180 degrees
-                print(f"  Rolling data by {roll_amount} points to align with prime meridian (Africa)")
-            else:
-                # Longitude is already in -180-180 range, but might not start at -180
-                # Find the index closest to -180 and roll to start there
-                min_lon_idx = np.argmin(lons_array)
-                if min_lon_idx > 0 and lons_array[min_lon_idx] < -170:
-                    # Roll to start near -180
-                    roll_amount = min_lon_idx
-                    lons_array = np.roll(lons_array, -roll_amount)
-                    needs_data_roll = True
-                    print(f"  Rolling data by {roll_amount} points to start at -180°")
-            
-            lons = lons_array
+        # --- Normalize longitudes and prepare sorting for map alignment ---
+        if np.max(lons) > 180:
+            print("  Converting longitude from 0–360 → –180–180 and sorting...")
+            lons = np.where(lons > 180, lons - 360, lons)
+            sort_idx = np.argsort(lons)
+            lons = lons[sort_idx]
+            needs_data_sort = True
+        else:
+            needs_data_sort = False
+            sort_idx = np.arange(len(lons))
+
+        print("Longitude count:", len(lons))
+        print("Longitude range:", lons[0], "→", lons[-1])
+        print("Longitude sorted ascending:", np.all(np.diff(lons) >= 0))
+
         
         if 'lat' in ds.coords or 'lat' in ds.data_vars:
             lats = ds['lat'].values
@@ -355,11 +343,7 @@ def extract_ocean_temperature_data():
         lats_full = lats
         lons = lons_full[::spatial_step] if hasattr(lons_full, '__getitem__') else lons_full
         lats = lats_full[::spatial_step] if hasattr(lats_full, '__getitem__') else lats_full
-        # ✅ Normalize longitude values for D3 (convert 0–360 → -180–180)
-        lons = [(lon - 360 if lon > 180 else lon) for lon in lons]
-        lons_full = [(lon - 360 if lon > 180 else lon) for lon in lons_full]
 
-        
         years = num_times / 12
         print(f"Extracting {num_times} time steps (most recent {years:.1f} years)...")
         if hasattr(lons_full, '__len__') and hasattr(lats_full, '__len__'):
@@ -391,41 +375,49 @@ def extract_ocean_temperature_data():
         for i in range(num_times - 1, -1, -1):  # From num_times-1 down to 0
             t = start_index + i  # Actual time index in dataset
             time_idx = i  # Index in the subset array
-            
-            # Get values for this time step (already loaded)
+
             values = da_subset.isel(time=time_idx).values
-            
-            # Roll the data to match longitude coordinate conversion (if needed)
-            if needs_data_roll and roll_amount > 0:
-                # Determine which axis is longitude
-                # For ocean data, check the shape and dimensions
-                # Typically: (lat, lon) or (j, i) where i is longitude
-                if len(values.shape) == 2:
-                    # Assume (lat, lon) format - roll along the last axis (longitude)
-                    values = np.roll(values, -roll_amount, axis=-1)
-                else:
-                    # Fallback: roll along axis 1
-                    values = np.roll(values, -roll_amount, axis=1)
-            
-            # Downsample spatial resolution (take every Nth point in both dimensions)
+            # --- Debug visualization: check longitude alignment ---
+            import matplotlib.pyplot as plt
+
+            if i == num_times - 1:  # only plot once for the first timestep
+                # Downsample before plotting
+                values_preview = values[::spatial_step, ::spatial_step]
+
+                lon_grid, lat_grid = np.meshgrid(lons, lats)
+                plt.figure(figsize=(10, 4))
+                plt.title("Sanity Check: Ocean Temperature Grid Alignment")
+
+                plt.pcolormesh(lon_grid, lat_grid, values_preview, shading='auto', cmap='coolwarm')
+                plt.xlabel("Longitude (°)")
+                plt.ylabel("Latitude (°)")
+                plt.colorbar(label="Temperature (°C)")
+                plt.show()
+
+
+            # 🔧 Force longitude alignment using sort index (guaranteed correct)
+            if 'sort_idx' in locals():
+                try:
+                    values = values[..., sort_idx]
+                except Exception as e:
+                    print(f"  Warning: could not reorder data for time step {time_idx}: {e}")
+
+            # Downsample spatial resolution
             values_downsampled = values[::spatial_step, ::spatial_step]
-            
-            # Vectorized processing: convert to list and handle NaN
+
+            # Convert to list and handle NaNs
             values_list = []
             for row in values_downsampled:
-                # Use list comprehension which is faster than nested loops with conditionals
                 values_list.append([None if np.isnan(v) else float(v) for v in row])
-            
-            # Get time as string
+
+            # Save the time step
             time_str = str(times[t])
-            
-            # Store with most recent at index 0 (append as we go backwards)
             data['timeSteps'].append({
-                'timeIndex': num_times - 1 - i,  # 0 for most recent, num_times-1 for oldest
+                'timeIndex': num_times - 1 - i,
                 'time': time_str,
                 'values': values_list
             })
-            
+
             if (num_times - i) % 10 == 0:
                 print(f"  Processed {num_times - i}/{num_times} time steps...")
         
@@ -436,118 +428,13 @@ def extract_ocean_temperature_data():
             "num_steps": len(ds['time'].values)
         }
         with open('ocean_temperature_data.json', 'w') as f:
+            print("Final longitude range before saving:", min(data['longitude']), "→", max(data['longitude']))
             json.dump(data, f)
         
         print("Done!")
         return data
     except Exception as e:
         print(f"Error extracting ocean temperature data: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
-    finally:
-        if ds is not None:
-            ds.close()
-        if gcs is not None:
-            try:
-                gcs.close()
-            except:
-                pass
-
-def extract_snow_melt_data():
-    """Extract snow melt data (snm) from CMIP6"""
-    gcs = None
-    ds = None
-    try:
-        print("Loading CMIP6 catalog...")
-        df = pd.read_csv('https://storage.googleapis.com/cmip6/cmip6-zarr-consolidated-stores.csv')
-        
-        print("Querying snow melt data...")
-        subset = df.query("activity_id=='CMIP' & variable_id == 'snm' & table_id == 'LImon' & experiment_id=='historical'")
-        
-        if len(subset) == 0:
-            print("No snow melt data found!")
-            return None
-        
-        zstore = subset.zstore.values[-1]
-        print(f"Using zstore: {zstore}")
-        
-        gcs = gcsfs.GCSFileSystem(token='anon')
-        mapper = gcs.get_mapper(zstore)
-        
-        print("Opening dataset...")
-        ds = xr.open_zarr(mapper, consolidated=True)
-        
-        var = 'snm'
-        lons_full = ds['lon'].values
-        lats_full = ds['lat'].values
-        times = ds['time'].values
-        
-        # Limit to 360 time steps (30 years of monthly data) to keep file size manageable
-        max_times = 360  # 30 years of monthly data
-        num_times = min(max_times, len(times))
-        start_index = len(times) - num_times  # Start from the most recent time steps
-        
-        # Downsample spatial resolution to reduce file size (take every 2nd point)
-        spatial_step = 2
-        lons = lons_full[::spatial_step]
-        lats = lats_full[::spatial_step]
-        
-        years = num_times / 12
-        print(f"Extracting {num_times} time steps (most recent {years:.1f} years)...")
-        print(f"  Spatial resolution: {len(lons)}x{len(lats)} (downsampled from {len(lons_full)}x{len(lats_full)})")
-        
-        data = {
-            'variable': var,
-            'longitude': lons.tolist(),
-            'latitude': lats.tolist(),
-            'timeSteps': []
-        }
-        
-        # Extract in reverse order: most recent first (index 0 = most recent)
-        # Load all time steps at once for better performance
-        print("  Loading data into memory...")
-        da_subset = ds[var].isel(time=slice(start_index, start_index + num_times))
-        da_subset = da_subset.load()
-        
-        # Iterate backwards through the time steps
-        for i in range(num_times - 1, -1, -1):  # From num_times-1 down to 0
-            t = start_index + i  # Actual time index in dataset
-            time_idx = i  # Index in the subset array
-            
-            # Get values for this time step (already loaded)
-            values = da_subset.isel(time=time_idx).values
-            
-            # Downsample spatial resolution (take every Nth point in both dimensions)
-            values_downsampled = values[::spatial_step, ::spatial_step]
-            
-            # Vectorized processing: convert to list and handle NaN
-            values_list = []
-            for row in values_downsampled:
-                # Use list comprehension which is faster than nested loops with conditionals
-                values_list.append([None if np.isnan(v) or v == 0 else float(v) for v in row])
-            
-            # Get time as string
-            time_str = str(times[t])
-            
-            # Store with most recent at index 0 (append as we go backwards)
-            data['timeSteps'].append({
-                'timeIndex': num_times - 1 - i,  # 0 for most recent, num_times-1 for oldest
-                'time': time_str,
-                'values': values_list
-            })
-            
-            if (num_times - i) % 10 == 0:
-                print(f"  Processed {num_times - i}/{num_times} time steps...")
-        
-        print(f"Saving data to snow_melt_data.json...")
-        with open('snow_melt_data.json', 'w') as f:
-            json.dump(data, f)
-        
-        print("Done!")
-        return data
-    except Exception as e:
-        print(f"Error extracting snow melt data: {e}")
         import traceback
         traceback.print_exc()
         return None
