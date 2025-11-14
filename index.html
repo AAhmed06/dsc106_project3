@@ -463,9 +463,10 @@
                 const data = await d3.json(`${variableFile}?v=${Date.now()}`);
                 currentData = data;
                 if (data.variable === "ta") data.timeSteps.reverse();
+                if (data.variable === "bigthetao") data.timeSteps.reverse();
 
                 // Toggle month dropdown visibility
-            if (data.variable === 'cVeg') {
+            if (data.variable === 'cVeg' || data.variable === 'bigthetao') {
                 d3.select('#date-month').style('display', 'none');
                 d3.select('label[for="date-month"]').style('display', 'none');
             } else {
@@ -565,8 +566,8 @@
             const variable = currentData.variable;
             let selectedMonth = '01'; // default for annual data
 
-            // Only check month if not vegetation
-            if (variable !== 'cVeg') {
+            // Only check month if not vegetation or ocean temperature (both are yearly)
+            if (variable !== 'cVeg' && variable !== 'bigthetao') {
                 selectedMonth = d3.select('#date-month').property('value');
             }
 
@@ -577,7 +578,7 @@
                 const dateMatch = timeStr.match(/(\d{4})-(\d{2})/);
                 const yearMatch = timeStr.match(/(\d{4})/);
 
-                if (variable === 'cVeg') {
+                if (variable === 'cVeg' || variable === 'bigthetao') {
                     if (yearMatch && yearMatch[1] === selectedYear) {
                         foundIndex = i;
                         break;
@@ -608,7 +609,7 @@
             if (timeStep && timeStep.time) {
                 const yearMatch = timeStep.time.match(/(\d{4})/);
                 const dateMatch = timeStep.time.match(/(\d{4})-(\d{2})/);
-                if (variable === 'cVeg' && yearMatch) {
+                if ((variable === 'cVeg' || variable === 'bigthetao') && yearMatch) {
                     d3.select('#date-year').property('value', yearMatch[1]);
                 } else if (dateMatch) {
                     d3.select('#date-year').property('value', dateMatch[1]);

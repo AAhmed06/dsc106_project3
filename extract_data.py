@@ -330,22 +330,45 @@ def extract_ocean_temperature_data():
         else:
             raise ValueError("Cannot determine latitude coordinates for ocean data")
         ds['time'] = pd.to_datetime(ds['time'].values)
-        ds = ds.sel(time=slice('1985-01-01', '2014-12-31'))
-        times = ds['time'].values
+        # Filter to data from 1985 onwards
+        ds = ds.sel(time=slice('1985-01-01', None))
+        
+        # Get surface level first, then aggregate by year
+        print("  Loading data into memory...")
+        if 'lev' in ds[var].dims:
+            da = ds[var].isel(lev=0)
+        elif 'olev' in ds[var].dims:
+            da = ds[var].isel(olev=0)
+        elif 'depth' in ds[var].dims:
+            da = ds[var].isel(depth=0)
+        else:
+            da = ds[var]
+        
+        # Apply longitude sorting if needed before aggregation
+        if needs_data_sort:
+            # Reorder the data along the longitude dimension
+            dims = list(da.dims)
+            if 'lon' in dims:
+                da = da.isel(lon=sort_idx)
+            elif 'i' in dims:
+                da = da.isel(i=sort_idx)
+        
+        # Aggregate monthly data to yearly means
+        print("  Aggregating to yearly means (from most recent year to 1985)...")
+        da_yearly = da.groupby('time.year').mean(dim='time')
+        # Get the year dimension name (could be 'year' or the grouped coordinate name)
+        year_dim = [d for d in da_yearly.dims if d != 'lat' and d != 'lon' and d != 'i' and d != 'j'][0]
+        years = da_yearly[year_dim].values  # Years in ascending order (1985, 1986, ..., most recent)
+        
         # Downsample spatial resolution to reduce file size
-        # Using spatial_step = 2 for better resolution
-        # With spatial_step = 2, we can fit 68 time steps (~5.7 years) under 100MB
         spatial_step = 2
-        max_times = 68  # ~5.7 years of monthly data (fits under 100MB with spatial_step=2)
-        num_times = min(max_times, len(times))
-        start_index = len(times) - num_times  # Start from the most recent time steps
         lons_full = lons
         lats_full = lats
         lons = lons_full[::spatial_step] if hasattr(lons_full, '__getitem__') else lons_full
         lats = lats_full[::spatial_step] if hasattr(lats_full, '__getitem__') else lats_full
-
-        years = num_times / 12
-        print(f"Extracting {num_times} time steps (most recent {years:.1f} years)...")
+        
+        num_years = len(years)
+        print(f"Extracting {num_years} yearly steps ({years[0]}–{years[-1]})...")
         if hasattr(lons_full, '__len__') and hasattr(lats_full, '__len__'):
             print(f"  Spatial resolution: {len(lons)}x{len(lats)} (downsampled from {len(lons_full)}x{len(lats_full)})")
         
@@ -356,31 +379,20 @@ def extract_ocean_temperature_data():
             'timeSteps': []
         }
         
-        # Get surface level (lev=0 or depth=0)
-        # Load all time steps at once for better performance
-        print("  Loading data into memory...")
-        if 'lev' in ds[var].dims:
-            da_subset = ds[var].isel(time=slice(start_index, start_index + num_times), lev=0)
-        elif 'olev' in ds[var].dims:
-            da_subset = ds[var].isel(time=slice(start_index, start_index + num_times), olev=0)
-        elif 'depth' in ds[var].dims:
-            da_subset = ds[var].isel(time=slice(start_index, start_index + num_times), depth=0)
-        else:
-            da_subset = ds[var].isel(time=slice(start_index, start_index + num_times))
+        # Preload dataset
+        da_yearly = da_yearly.load()
         
-        da_subset = da_subset.load()
-        
-        # Extract in reverse order: most recent first (index 0 = most recent)
-        # Iterate backwards through the time steps
-        for i in range(num_times - 1, -1, -1):  # From num_times-1 down to 0
-            t = start_index + i  # Actual time index in dataset
-            time_idx = i  # Index in the subset array
+        # Extract in reverse order: most recent year first (index 0 = most recent)
+        # Iterate backwards through the years
+        for i in range(num_years - 1, -1, -1):  # From most recent year down to 1985
+            year = years[i]
+            year_idx = i  # Index in the yearly array
 
-            values = da_subset.isel(time=time_idx).values
-            # --- Debug visualization: check longitude alignment ---
-            import matplotlib.pyplot as plt
-
-            if i == num_times - 1:  # only plot once for the first timestep
+            values = da_yearly.isel({year_dim: year_idx}).values
+            
+            # Debug visualization: check longitude alignment (only for first year)
+            if i == num_years - 1:  # only plot once for the most recent year
+                import matplotlib.pyplot as plt
                 # Downsample before plotting
                 values_preview = values[::spatial_step, ::spatial_step]
 
@@ -394,14 +406,6 @@ def extract_ocean_temperature_data():
                 plt.colorbar(label="Temperature (°C)")
                 plt.show()
 
-
-            # 🔧 Force longitude alignment using sort index (guaranteed correct)
-            if 'sort_idx' in locals():
-                try:
-                    values = values[..., sort_idx]
-                except Exception as e:
-                    print(f"  Warning: could not reorder data for time step {time_idx}: {e}")
-
             # Downsample spatial resolution
             values_downsampled = values[::spatial_step, ::spatial_step]
 
@@ -410,16 +414,16 @@ def extract_ocean_temperature_data():
             for row in values_downsampled:
                 values_list.append([None if np.isnan(v) else float(v) for v in row])
 
-            # Save the time step
-            time_str = str(times[t])
+            # Save the time step (most recent year at index 0)
+            time_str = str(year)
             data['timeSteps'].append({
-                'timeIndex': num_times - 1 - i,
+                'timeIndex': num_years - 1 - i,  # 0 for most recent, increasing to oldest
                 'time': time_str,
                 'values': values_list
             })
 
-            if (num_times - i) % 10 == 0:
-                print(f"  Processed {num_times - i}/{num_times} time steps...")
+            if (num_years - i) % 5 == 0:
+                print(f"  Processed {num_years - i}/{num_years} years...")
         
         print(f"Saving data to ocean_temperature_data.json...")
         data['time_range'] = {
@@ -460,17 +464,17 @@ if __name__ == "__main__":
         print("=" * 50)
         
         # Extract all data types
-        print("\n1. Extracting Global Atmospheric Temperature Data (ta, Emon)...")
-        extract_temperature_data()
+        # print("\n1. Extracting Global Atmospheric Temperature Data (ta, Emon)...")
+        # extract_temperature_data()
         
-        print("\n2. Extracting Global Vegetation Carbon Data (cVeg, Emon)...")
-        extract_vegetation_data()
+        # print("\n2. Extracting Global Vegetation Carbon Data (cVeg, Emon)...")
+        # extract_vegetation_data()
         
-        print("\n3. Extracting Ocean Temperature Data (bigthetao, Omon)...")
+        print("\n1. Extracting Ocean Temperature Data (bigthetao, Omon)...")
         extract_ocean_temperature_data()
         
-        print("\n4. Extracting Global Surface Snow Melt Data (snm, LImon)...")
-        extract_snow_melt_data()
+        # print("\n4. Extracting Global Surface Snow Melt Data (snm, LImon)...")
+        # extract_snow_melt_data()
         
         print("\n" + "=" * 50)
         print("Data extraction complete!")
